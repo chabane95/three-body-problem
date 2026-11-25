@@ -1,5 +1,6 @@
-"""Package the interactive viewer and both C++ trajectories for offline viewing."""
+"""Package the 3D solver, worker, viewer and planar reference orbits for offline use."""
 
+import base64
 from pathlib import Path
 import zipfile
 
@@ -23,9 +24,15 @@ def main():
     page = replace_once(page, 'href="README.md">Dokumentation',
                         'href="https://github.com/chabane95/three-body-problem#readme">Dokumentation auf GitHub')
     scripts = []
+    preset = (ROOT / "data/flyby-preset.json").read_text(encoding="utf-8")
+    scripts.append(f'<script type="application/json" id="flyby-preset">{preset}</script>')
     for name in ("figure-eight", "lagrange"):
         data = (ROOT / "data" / f"{name}.json").read_text(encoding="utf-8")
         scripts.append(f'<script type="application/json" id="data-{name}">{data}</script>')
+    worker = (ROOT / "src/solver-worker.js").read_text(encoding="utf-8")
+    wasm = base64.b64encode((ROOT / "src/solver.wasm").read_bytes()).decode("ascii")
+    scripts.append(f'<script type="text/plain" id="solver-worker">{worker}</script>')
+    scripts.append(f'<script type="application/octet-stream" id="solver-wasm">{wasm}</script>')
     scripts.append(f'<script type="module">\n{js}\n</script>')
     page = replace_once(page, "</body>", "\n".join(scripts) + "\n</body>")
     html = page.encode("utf-8")

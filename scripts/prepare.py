@@ -46,6 +46,24 @@ def position_error_lagrange(frames):
     return largest
 
 
+def export_flyby(solver, destination):
+    preset = json.loads((destination / "flyby-preset.json").read_text(encoding="utf-8"))
+    args = [str(solver), "--duration", str(preset["duration"]), "--intervals", str(preset["samples"]-1),
+            "--gravity", str(preset["G"]), "--rtol", str(preset["rtol"]),
+            "--atol-position", str(preset["atolPosition"]), "--atol-velocity", str(preset["atolVelocity"])]
+    for m, r, v in zip(preset["masses"], preset["positions"], preset["velocities"]):
+        args.extend(["--body", *map(str, [m, *r, *v])])
+    run = json.loads(subprocess.check_output(args))
+    frames = run["frames"]
+    # The animated preview uses only positions; the interactive viewer solves the full run itself.
+    indices = sorted(set(range(0, len(frames), 6)) | {len(frames)-1})
+    preview = [{"t": frames[i]["t"], "positions": frames[i]["positions"]} for i in indices]
+    write_data(destination / "flyby-preview.json",
+               "[\n" + ",\n".join(json.dumps(row, separators=(",", ":")) for row in preview) + "\n]\n")
+    print(f"3D: {len(frames)} Zeitpunkte, {run['stats']['accepted']} Schritte, "
+          f"max |dE/E0| = {energy_error(frames):.6e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     binary = "three-body.exe" if os.name == "nt" else "three-body"
@@ -57,6 +75,7 @@ def main():
         parser.error(f"Solver fehlt: {solver}. Bitte zuerst den C++-Kern bauen.")
     destination = ROOT / "data"
     destination.mkdir(exist_ok=True)
+    export_flyby(solver, destination)
     for scenario in ("figure-eight", "lagrange"):
         trajectory = integrate(solver, scenario, 7200, 10)
         frames = json.loads(trajectory)["frames"]

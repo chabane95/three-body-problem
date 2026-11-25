@@ -12,111 +12,180 @@ namespace {
 using namespace three_body;
 
 void usage() {
-    std::cout << "three-body [--scenario figure-eight|lagrange] [--periods FLOAT]\n"
-                 "           [--steps-per-period INT] [--sample-every INT]\n"
-                 "Writes a JSON trajectory to stdout. Defaults: figure-eight, 1, 7200, 20.\n";
+    std::cout <<
+        "Planar reference trajectories (fixed velocity Verlet):\n"
+        "  three-body [--scenario figure-eight|lagrange] [--periods N]\n"
+        "             [--steps-per-period N] [--sample-every N]\n"
+        "Custom 3D initial values (adaptive Dormand-Prince):\n"
+        "  three-body --body M X Y Z VX VY VZ --body ... --body ... --duration T\n"
+        "             [--intervals N] [--gravity G] [--rtol R]\n"
+        "             [--atol-position A] [--atol-velocity A] [--min-distance R]\n"
+        "Standard output is JSON. Each custom run returns N+1 equally spaced frames.\n";
 }
 
 std::size_t positive_integer(std::string_view text) {
     std::size_t value = 0;
-    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || value == 0) {
-        throw std::invalid_argument("Expected a positive integer, got " + std::string(text));
-    }
+    const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{} || result.ptr != text.data() + text.size() || value == 0)
+        throw std::invalid_argument("Expected a positive integer: " + std::string(text));
     return value;
 }
 
-double positive_number(const std::string& text) {
+double number(const std::string& text) {
     std::size_t consumed = 0;
     const double value = std::stod(text, &consumed);
-    if (consumed != text.size() || !std::isfinite(value) || value <= 0.0) {
-        throw std::invalid_argument("Expected a positive finite number, got " + text);
-    }
+    if (consumed != text.size() || !std::isfinite(value))
+        throw std::invalid_argument("Expected a finite number: " + text);
     return value;
 }
 
-void write_json(double value) {
-    std::cout << value;
+struct Settings {
+    State state;
+    std::size_t bodies = 0;
+    double duration = 0.0;
+    std::size_t intervals = 720;
+    AdaptiveOptions adaptive;
+    std::string preset = "figure-eight";
+    double periods = 1.0;
+    std::size_t steps_per_period = 7200;
+    std::size_t sample_every = 20;
+};
+
+Settings parse(int argc, char** argv) {
+    Settings settings;
+    bool reference_flags = false, custom_flags = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string key = argv[i];
+        const auto next = [&]() -> std::string {
+            if (++i >= argc) throw std::invalid_argument("Missing value for " + key);
+            return argv[i];
+        };
+        if (key == "--body") {
+            custom_flags = true;
+            const auto b = settings.bodies++;
+            if (b >= 3) throw std::invalid_argument("Exactly three --body arguments are required");
+            settings.state.masses[b] = number(next());
+            settings.state.positions[b] = {number(next()), number(next()), number(next())};
+            settings.state.velocities[b] = {number(next()), number(next()), number(next())};
+        } else if (key == "--scenario" || key == "--periods" || key == "--steps-per-period" || key == "--sample-every") {
+            reference_flags = true;
+            if (key == "--scenario") settings.preset = next();
+            else if (key == "--periods") settings.periods = number(next());
+            else if (key == "--steps-per-period") settings.steps_per_period = positive_integer(next());
+            else settings.sample_every = positive_integer(next());
+        } else {
+            custom_flags = true;
+            if (key == "--duration") settings.duration = number(next());
+            else if (key == "--intervals") settings.intervals = positive_integer(next());
+            else if (key == "--gravity") settings.state.G = number(next());
+            else if (key == "--rtol") settings.adaptive.rtol = number(next());
+            else if (key == "--atol-position") settings.adaptive.atol_position = number(next());
+            else if (key == "--atol-velocity") settings.adaptive.atol_velocity = number(next());
+            else if (key == "--min-distance") settings.adaptive.min_distance = number(next());
+            else throw std::invalid_argument("Unknown option " + key);
+        }
+    }
+    if (reference_flags && custom_flags) throw std::invalid_argument("Choose a reference run or a custom 3D run");
+    if (custom_flags && (settings.bodies != 3 || settings.duration <= 0.0))
+        throw std::invalid_argument("Custom runs require three --body arguments and a positive --duration");
+    if (settings.preset != "figure-eight" && settings.preset != "lagrange")
+        throw std::invalid_argument("Unknown preset " + settings.preset);
+    if (settings.periods <= 0.0) throw std::invalid_argument("--periods must be positive");
+    return settings;
 }
 
-void write_json(Vec2 value) {
-    std::cout << '[' << value.x << ',' << value.y << ']';
+void json_value(double value, bool) { std::cout << value; }
+
+void json_value(Vec3 value, bool spatial) {
+    std::cout << '[' << value.x << ',' << value.y;
+    if (spatial) std::cout << ',' << value.z;
+    std::cout << ']';
 }
 
 template<class T, std::size_t N>
-void write_json(const std::array<T, N>& values) {
+void json_value(const std::array<T, N>& values, bool spatial) {
     std::cout << '[';
     for (std::size_t i = 0; i < N; ++i) {
-        if (i != 0) std::cout << ',';
-        write_json(values[i]);
+        if (i) std::cout << ',';
+        json_value(values[i], spatial);
     }
     std::cout << ']';
 }
 
-void write_frame(double t, const State& state) {
-    const auto d = diagnostics(state);
+void write_frame(double t, const State& s, const Diagnostics& d, bool spatial) {
     std::cout << "{\"t\":" << t << ",\"positions\":";
-    write_json(state.positions);
-    std::cout << ",\"velocities\":";
-    write_json(state.velocities);
-    std::cout << ",\"energy\":" << d.energy << ",\"momentum\":";
-    write_json(d.momentum);
-    std::cout << ",\"angularMomentum\":" << d.angular_momentum << ",\"centerOfMass\":";
-    write_json(d.center_of_mass);
-    std::cout << ",\"distances\":";
-    write_json(d.distances);
+    json_value(s.positions, spatial);
+    std::cout << ",\"velocities\":"; json_value(s.velocities, spatial);
+    std::cout << ",\"energy\":" << d.energy << ",\"momentum\":"; json_value(d.momentum, spatial);
+    std::cout << ",\"angularMomentum\":" << d.angular_momentum;
+    if (spatial) {
+        std::cout << ",\"angularMomentumVector\":";
+        json_value(d.angular_momentum_vector, true);
+    }
+    std::cout << ",\"centerOfMass\":"; json_value(d.center_of_mass, spatial);
+    std::cout << ",\"distances\":"; json_value(d.distances, spatial);
     std::cout << '}';
+}
+
+void write_run(const Settings& settings) {
+    const bool spatial = settings.bodies == 3;
+    const auto begin_frames = [](const State& s) {
+        std::cout << ",\"G\":" << s.G << ",\"masses\":";
+        json_value(s.masses, true);
+        std::cout << ",\"frames\":[\n";
+    };
+    auto observe = [spatial, first = true](double t, const State& s) mutable {
+        const auto d = diagnostics(s);
+        if (!first) std::cout << ",\n";
+        write_frame(t, s, d, spatial);
+        first = false;
+    };
+    if (spatial) {
+        validate(settings.state);
+        std::cout << "{\"scenario\":\"custom\",\"integrator\":\"DOPRI5(4)\",\"duration\":" << settings.duration
+                  << ",\"intervals\":" << settings.intervals << ",\"rtol\":" << settings.adaptive.rtol
+                  << ",\"atolPosition\":" << settings.adaptive.atol_position
+                  << ",\"atolVelocity\":" << settings.adaptive.atol_velocity
+                  << ",\"minDistance\":" << settings.adaptive.min_distance;
+        begin_frames(settings.state);
+        AdaptiveStats stats;
+        try {
+            stats = simulate_adaptive(settings.state, settings.duration, settings.intervals, settings.adaptive, observe);
+        } catch (const std::exception&) {
+            std::cout << "\n],\"completed\":false}\n";
+            throw;
+        }
+        std::cout << "\n],\"completed\":true,\"stats\":{\"accepted\":" << stats.accepted_steps
+                  << ",\"rejected\":" << stats.rejected_steps << ",\"minStep\":" << stats.min_step
+                  << ",\"maxStep\":" << stats.max_step << ",\"minDistance\":" << stats.min_distance
+                  << ",\"maxErrorRatio\":" << stats.max_error_ratio << "}}\n";
+        return;
+    }
+    const auto scenario = settings.preset == "lagrange" ? lagrange() : figure_eight();
+    const double duration = settings.periods * scenario.period;
+    const double count = std::ceil(settings.periods * static_cast<double>(settings.steps_per_period));
+    if (!std::isfinite(duration) || count < 1.0 || count > 9007199254740991.0 ||
+        count >= static_cast<double>(std::numeric_limits<std::size_t>::max()))
+        throw std::invalid_argument("Requested integration interval is out of range");
+    const auto steps = static_cast<std::size_t>(count);
+    std::cout << "{\"scenario\":\"" << settings.preset << "\",\"period\":" << scenario.period
+              << ",\"stepsPerPeriod\":" << settings.steps_per_period << ",\"steps\":" << steps
+              << ",\"stepSize\":" << duration / steps << ",\"sampleEvery\":" << settings.sample_every;
+    begin_frames(scenario.initial);
+    simulate(scenario.initial, duration, steps, settings.sample_every, observe);
+    std::cout << "\n]}\n";
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    using namespace three_body;
     try {
-        std::string scenario_name = "figure-eight";
-        double periods = 1.0;
-        std::size_t steps_per_period = 7200;
-        std::size_t sample_every = 20;
-        for (int arg = 1; arg < argc; ++arg) {
-            const std::string option = argv[arg];
-            if (option == "--help" || option == "-h") {
-                usage();
-                return 0;
-            }
-            if (arg + 1 == argc) throw std::invalid_argument("Missing value for " + option);
-            const std::string value = argv[++arg];
-            if (option == "--scenario") scenario_name = value;
-            else if (option == "--periods") periods = positive_number(value);
-            else if (option == "--steps-per-period") steps_per_period = positive_integer(value);
-            else if (option == "--sample-every") sample_every = positive_integer(value);
-            else throw std::invalid_argument("Unknown option " + option);
+        if (argc == 2 && (std::string_view(argv[1]) == "--help" || std::string_view(argv[1]) == "-h")) {
+            usage();
+            return 0;
         }
-        if (scenario_name != "figure-eight" && scenario_name != "lagrange") {
-            throw std::invalid_argument("Expected --scenario figure-eight or lagrange");
-        }
-        const auto scenario = scenario_name == "lagrange" ? lagrange() : figure_eight();
-        const double duration = periods * scenario.period;
-        const double count = std::ceil(periods * static_cast<double>(steps_per_period));
-        // Beyond 2^53 even consecutive integer step indices need not map to distinct doubles.
-        if (!std::isfinite(duration) || count < 1.0 || count > 9007199254740991.0 ||
-            count >= static_cast<double>(std::numeric_limits<std::size_t>::max())) {
-            throw std::invalid_argument("Requested integration interval is out of range");
-        }
-        const auto steps = static_cast<std::size_t>(count);
         std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
-        std::cout << "{\"scenario\":\"" << scenario_name << "\",\"period\":" << scenario.period
-                  << ",\"stepsPerPeriod\":" << steps_per_period << ",\"steps\":" << steps
-                  << ",\"stepSize\":" << duration / steps << ",\"sampleEvery\":" << sample_every
-                  << ",\"G\":" << scenario.initial.G << ",\"masses\":";
-        write_json(scenario.initial.masses);
-        std::cout << ",\"frames\":[\n";
-        bool first = true;
-        simulate(scenario.initial, duration, steps, sample_every, [&](double t, const State& s) {
-            if (!first) std::cout << ",\n";
-            write_frame(t, s);
-            first = false;
-        });
-        std::cout << "\n]}\n";
+        write_run(parse(argc, argv));
         std::cout.flush();
         return std::cout ? 0 : 1;
     } catch (const std::exception& e) {

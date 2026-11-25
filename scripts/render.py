@@ -230,6 +230,52 @@ def motion(run, dest):
                   duration=60, loop=0, disposal=1, optimize=False)
 
 
+def spatial_motion(frames, dest):
+    # Fixed orthographic camera. Identical scale along both screen axes.
+    yaw, pitch = 1.05, 0.65
+    cy, sy, cp, sp = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch)
+
+    def rotate(x, y, z):
+        side = -sy*x + cy*y
+        return cy*x + sy*y, cp*side + sp*z, -sp*side + cp*z
+
+    views = [[rotate(*p) for p in f["positions"]] for f in frames]
+    xs, ys, _ = zip(*(p for view in views for p in view))
+    cx, cy_screen = (max(xs)+min(xs))/2, (max(ys)+min(ys))/2
+    scale = min(730/(max(xs)-min(xs)), 245/(max(ys)-min(ys)))
+    paths = [[(430+(view[j][0]-cx)*scale, 181-(view[j][1]-cy_screen)*scale)
+              for view in views] for j in range(3)]
+    base = Canvas(860, 358)
+    for body, color in enumerate(COLORS):
+        base.path(paths[body], "#D9DEDF", 1)
+        x = 595+83*body
+        base.dot(x, 22, 4, color)
+        base.label(x+9, 22, f"Körper {body+1}", 13, "lm")
+    for label, vector in zip("xyz", ((1,0,0), (0,1,0), (0,0,1))):
+        x, y, _ = rotate(*vector)
+        base.path([(47, 312), (47+27*x, 312-27*y)], AXIS, 1)
+        base.label(47+38*x, 312-38*y, label, 12)
+    base.path([(798-scale, 324), (798, 324)], AXIS, 1.3)
+    for x in (798-scale, 798):
+        base.path([(x, 321), (x, 327)], AXIS, 1)
+    base.label(798-scale/2, 340, "1 L₀", 12)
+
+    def render(i):
+        frame = base.copy()
+        frame.label(28, 22, "t / t₀ = " + number(frames[i]["t"]), 14, "lm")
+        for body, color in enumerate(COLORS):
+            if i:
+                frame.path(paths[body][max(0, i-23):i+1], color, 2.2)
+        for body in sorted(range(3), key=lambda j: views[i][j][2]):
+            frame.dot(*paths[body][i], 6.2, COLORS[body])
+        return frame.finish()
+
+    palette = render(len(frames)//2).quantize(256, method=Image.Quantize.MEDIANCUT)
+    movie = [render(i).quantize(palette=palette, dither=Image.Dither.NONE) for i in range(len(frames))]
+    movie[0].save(dest/"flyby-3d.gif", save_all=True, append_images=movie[1:],
+                  duration=[50]*(len(movie)-1)+[1100], loop=0, disposal=1, optimize=False)
+
+
 def trajectories(acht, lagrange, dest):
     c = Canvas(895, 309, print_figure=True)
     # Both panels use equal x and y scales. Their horizontal domains differ.
@@ -330,6 +376,7 @@ def main():
     diagnostics(acht, convergence, args.output)
     distances(acht, args.output)
     motion(acht, args.output)
+    spatial_motion(load("flyby-preview"), args.output)
 
 
 if __name__ == "__main__":

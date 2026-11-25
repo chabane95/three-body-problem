@@ -10,24 +10,63 @@
 </head>
 <body>
   <main>
-    <header><h1>Dreikörperproblem</h1><div class="scenario-field"><label for="scenario">Beispiel</label><select id="scenario"><option value="figure-eight">Figur-Acht</option><option value="lagrange">Lagrange-Dreieck</option></select></div></header>
+    <header><h1>Dreikörperproblem</h1><div class="scenario-field">
+      <label for="scenario">Simulation</label>
+      <select id="scenario">
+        <option value="flyby" selected>Räumlicher Vorbeiflug</option>
+        <option value="figure-eight">Figur-Acht</option>
+        <option value="lagrange">Lagrange-Dreieck</option>
+        <option value="custom">Eigene Anfangsdaten</option>
+      </select>
+    </div></header>
+    <details id="editor">
+      <summary>Anfangsdaten bearbeiten</summary>
+      <form id="initial-form">
+        <div id="bodies" class="bodies"></div>
+        <div class="settings">
+          <label>Laufdauer t / t₀<input id="duration" type="number" step="any" min="0" required></label>
+          <details class="tolerances"><summary>Lokale Fehlertoleranzen</summary><div class="tolerance-fields">
+            <label>Relativ<input id="rtol" type="number" step="any" min="0" value="1e-8" required></label>
+            <label>Position / L₀, absolut<input id="atol-position" type="number" step="any" min="0" value="1e-10" required></label>
+            <label>Geschwindigkeit / (L₀/t₀), absolut<input id="atol-velocity" type="number" step="any" min="0" value="1e-10" required></label>
+            <label>Abbruchabstand / L₀<input id="min-distance" type="number" step="any" min="0" value="0" title="Bei diesem Paarabstand endet die Rechnung. 0 deaktiviert diese zusätzliche Grenze." required></label>
+          </div></details>
+        </div>
+        <div class="form-foot"><button class="primary" id="calculate" type="submit">Bahn berechnen</button><span>Normierte Einheiten · G = 1</span></div>
+      </form>
+    </details>
+    <div class="run-status" id="run-status" hidden>
+      <span id="notice" role="status"></span><progress id="progress" max="1" aria-label="Fortschritt"></progress><button id="cancel" type="button">Abbrechen</button>
+    </div>
     <section id="simulation" aria-label="Interaktive Bahnsimulation" aria-busy="true">
       <div class="stage">
-        <div class="plot"><canvas id="orbits" role="img" aria-label="Bahnen und aktuelle Positionen der drei Körper mit gleicher Skalierung in x und y. Die numerischen Koordinaten sind unter Messdaten verfügbar."></canvas><p id="plot-status" role="status">Bahndaten werden geladen …</p></div>
-        <div class="stage-foot"><div class="legend" aria-label="Körperfarben"><span><i class="dot body-1"></i>Körper 1</span><span><i class="dot body-2"></i>Körper 2</span><span><i class="dot body-3"></i>Körper 3</span></div><label class="trail-toggle"><input id="trails" type="checkbox" checked>Bahnspuren</label></div>
+        <div class="plot"><canvas id="orbits" tabindex="0" role="img" title="Ziehen oder Pfeiltasten zum Drehen, + und − zum Zoomen" aria-label="Räumliche Bahnen. Zum Drehen ziehen oder die Pfeiltasten drücken. Plus und Minus zoomen. Die Taste 0 setzt die Ansicht zurück."></canvas><p id="plot-status">Bahndaten werden geladen …</p></div>
+        <div class="stage-foot"><div class="legend" aria-label="Körperfarben"><span>Körper</span><span><i class="dot body-1"></i>1</span><span><i class="dot body-2"></i>2</span><span><i class="dot body-3"></i>3</span></div>
+          <div class="view-controls"><label class="trail-toggle"><input id="trails" type="checkbox" checked>Spuren</label>
+            <select id="view" aria-label="Blickrichtung" title="Blickrichtung zurücksetzen"><option value="space">3D</option><option value="top">xy</option><option value="free" hidden>Frei</option></select>
+            <button id="zoom-out" type="button" aria-label="Verkleinern" title="Verkleinern">−</button><button id="zoom-in" type="button" aria-label="Vergrößern" title="Vergrößern">+</button>
+            <button id="reset-view" type="button" aria-label="Ansicht zurücksetzen" title="Ansicht zurücksetzen">↺</button>
+          </div>
+        </div>
       </div>
       <div class="transport" role="group" aria-label="Wiedergabe">
-        <div class="transport-head"><button id="play" type="button" class="play" disabled><span aria-hidden="true" id="play-icon">▶</span><span id="play-label">Abspielen</span></button>
+        <div class="transport-head"><button id="play" type="button" class="play primary" disabled><span aria-hidden="true" id="play-icon">▶</span><span id="play-label">Abspielen</span></button>
           <label class="speed"><span>Tempo</span><select id="speed" aria-label="Wiedergabetempo"><option value="0.25">0,25×</option><option value="0.5">0,5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-          <div class="readouts"><output id="clock" for="time" aria-live="off">t / T = —</output><span title="Relative Abweichung der Gesamtenergie vom Anfangswert"><span aria-label="Relative Energieabweichung">ΔE / |E₀|</span> = <output id="error" for="time" aria-live="off">—</output></span></div>
+          <div class="readouts"><output id="clock" for="time" aria-live="off">t / t₀ = —</output><span title="Abweichung der Gesamtenergie vom Anfangswert"><span id="error-unit">ΔE / |E₀|</span> = <output id="error" for="time" aria-live="off">—</output></span></div>
         </div>
-        <label class="sr" for="time">Zeitpunkt innerhalb der Umlaufperiode</label><input type="range" id="time" min="0" max="1" value="0" step="1" disabled>
-        <div class="timeline-ticks" aria-hidden="true"><span>0</span><span>T / 4</span><span>T / 2</span><span>3T / 4</span><span>T</span></div>
+        <label class="sr" for="time">Simulationszeit</label><input type="range" id="time" min="0" max="1" value="0" step="1" disabled>
+        <div class="timeline-ticks" aria-hidden="true"><span>0</span><span></span><span></span><span></span><span></span></div>
       </div>
       <details id="details"><summary>Messdaten</summary>
-        <div class="diagnostics"><section><h2>Energieabweichung ΔE / |E₀|</h2><canvas id="energy-plot" role="img" aria-label="Relative Energieabweichung während einer Periode. Der senkrechte Strich markiert den gewählten Zeitpunkt."></canvas><dl class="run-info"><div><dt>Gesamtenergie</dt><dd id="energy">—</dd></div><div><dt>Periode T / t₀</dt><dd id="period">—</dd></div><div><dt>Schritte je Periode</dt><dd id="steps">—</dd></div></dl></section>
+        <div class="diagnostics"><section><h2 id="error-title">Energieabweichung</h2><canvas id="energy-plot" role="img" aria-label="Energieabweichung; der senkrechte Strich markiert die gewählte Zeit."></canvas><dl class="run-info">
+          <div><dt>Gesamtenergie</dt><dd id="energy">—</dd></div><div><dt id="time-label">Laufdauer / t₀</dt><dd id="period">—</dd></div>
+          <div><dt>Integrationsschritte</dt><dd id="steps">—</dd></div>
+          <div id="reject-row" hidden><dt>Verworfene Schritte</dt><dd id="rejected">—</dd></div>
+          <div id="minstep-row" hidden><dt>Kleinster Schritt / t₀</dt><dd id="min-step">—</dd></div>
+          <div id="minr-row" hidden><dt>Kleinster erfasster Abstand / L₀</dt><dd id="min-r">—</dd></div>
+        </dl></section>
           <section><h2>Paarabstände <span>r / L₀</span></h2><div id="distances"></div></section>
-          <section><h2>Positionen</h2><table><caption class="sr">Koordinaten in Längeneinheiten L₀</caption><thead><tr><th scope="col">Körper</th><th scope="col">x / L₀</th><th scope="col">y / L₀</th></tr></thead><tbody id="coordinates"></tbody></table></section>
+          <section><h2>Positionen <span>r / L₀</span></h2><table><caption class="sr">Kartesische Koordinaten in Längeneinheiten L₀</caption><thead><tr><th scope="col">Körper</th><th scope="col">x</th><th scope="col">y</th><th scope="col">z</th></tr></thead><tbody id="coordinates"></tbody></table></section>
         </div>
       </details>
     </section>
