@@ -1,0 +1,32 @@
+[
+  {
+    "stepsPerPeriod": 90,
+    "positionError": 0.006147046501160716,
+    "energyError": 5.895589910191273e-06
+  },
+  {
+    "stepsPerPeriod": 180,
+    "positionError": 0.0015388025285007283,
+    "energyError": 3.704900145192388e-07
+  },
+  {
+    "stepsPerPeriod": 360,
+    "positionError": 0.00038482880831242647,
+    "energyError": 2.3187348041631143e-08
+  },
+  {
+    "stepsPerPeriod": 720,
+    "positionError": 9.621525322016768e-05,
+    "energyError": 1.4497052447381977e-09
+  },
+  {
+    "stepsPerPeriod": 1440,
+    "positionError": 2.4054313311020608e-05,
+    "energyError": 9.061462691306589e-11
+  },
+  {
+    "stepsPerPeriod": 2880,
+    "positionError": 6.013610015923422e-06,
+    "energyError": 5.659324860592582e-12
+  }
+]
